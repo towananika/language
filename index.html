@@ -86,6 +86,23 @@ button:focus-visible{outline:2px solid var(--ink);outline-offset:2px}
 .card button{padding:2px 8px;font-size:12px;margin-left:auto;flex:none}
 .note{font-size:12.5px;color:var(--sub);margin:0}
 @media (prefers-reduced-motion: reduce){*{transition:none!important;animation:none!important}}
+.today{display:flex;gap:10px}
+.today .box{flex:1;border:1px solid var(--rule);border-radius:12px;padding:10px 12px}
+.today .box b{display:block;font-family:var(--f-display);font-size:26px;line-height:1.1;font-variant-numeric:tabular-nums}
+.today .box span{font-size:12.5px;color:var(--sub)}
+.bar2{height:6px;border-radius:3px;background:var(--soft);overflow:hidden}
+.bar2 i{display:block;height:100%;background:var(--c);transition:width .4s}
+.newtag{align-self:flex-start;font-size:12px;color:#fff;background:var(--c);border-radius:999px;padding:1px 10px}
+.target{font-size:24px;font-weight:700;line-height:1.45}
+.grade{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.grade button{padding:14px 10px;font-weight:700;font-size:16px}
+.grade .no{border-color:var(--ng);color:var(--ng)}
+.grade .yes{background:var(--ok);border-color:var(--ok);color:#fff}
+details{font-size:13.5px;color:var(--sub)}
+details summary{cursor:pointer}
+details p{margin:6px 0 0}
+.sched{list-style:none;margin:0;padding:0;font-size:14px;display:flex;flex-direction:column;gap:4px}
+.sched li{display:flex;justify-content:space-between;border-bottom:1px dotted var(--rule)}
 </style>
 </head>
 <body>
@@ -146,23 +163,36 @@ const P = [
 ].map((r,i)=>({id:i, scene:r[0], ja:r[1], jr:r[2], en:r[3], de:r[4], zh:r[5], py:r[6]}));
 
 const L = {
-  en:{name:"英語",   tag:"EN", code:"en-US", c:"var(--en)"},
-  de:{name:"ドイツ語",tag:"DE", code:"de-DE", c:"var(--de)"},
   ja:{name:"日本語", tag:"JA", code:"ja-JP", c:"var(--ja)"},
   zh:{name:"中国語", tag:"ZH", code:"zh-CN", c:"var(--zh)"},
+  de:{name:"ドイツ語",tag:"DE", code:"de-DE", c:"var(--de)"},
+  en:{name:"英語",   tag:"EN", code:"en-US", c:"var(--en)"},
 };
-const ROUND = 10, MASTER = 3;
+const ROUND = 10;
+const STEPS = [1,3,7,14,30,60];          // 次に出すまでの日数。思い出せるたびに右へ進む
+const NEW_PER_DAY = 5, KNOWN = 3;        // 1日の新しい文／3回の別の日に思い出せたら「覚えた」
 
 /* ---------- 保存（この端末の中だけ） ---------- */
-let S = { lang:"en", rate:1, box:{en:{},de:{},ja:{},zh:{}}, plays:0 };
-try{ const s = JSON.parse(localStorage.getItem("yotsu") || "null"); if(s) S = Object.assign(S, s); }catch(e){}
-function save(){ try{ localStorage.setItem("yotsu", JSON.stringify(S)); }catch(e){} }
-const box = (lg,id)=> S.box[lg][id] || 0;
-const mastered = lg => P.filter(p=>box(lg,p.id)>=MASTER).length;
+let S = { lang:"zh", rate:1, card:{ja:{},zh:{},de:{},en:{}}, newDay:{date:"", n:{}} };
+try{ const s = JSON.parse(localStorage.getItem("yotsu2") || "null"); if(s) S = Object.assign(S, s); }catch(e){}
+Object.keys(L).forEach(lg=>{ S.card[lg] = S.card[lg] || {}; });
+function save(){ try{ localStorage.setItem("yotsu2", JSON.stringify(S)); }catch(e){} }
+
+const ymd = d => `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`;
+const today = () => ymd(new Date());
+const addDays = n => { const d = new Date(); d.setDate(d.getDate()+n); return ymd(d); };
+const known   = lg => P.filter(p=>S.card[lg][p.id] && S.card[lg][p.id].s>=KNOWN).length;
+const dueList = lg => P.filter(p=>S.card[lg][p.id] && S.card[lg][p.id].due<=today());
+const unseen  = lg => P.filter(p=>!S.card[lg][p.id]);
+const newUsed = lg => S.newDay.date===today() ? (S.newDay.n[lg]||0) : 0;
+const newLeft = lg => Math.min(unseen(lg).length, Math.max(0, NEW_PER_DAY - newUsed(lg)));
+const shuffle = a => a.map(x=>[Math.random(),x]).sort((a,b)=>a[0]-b[0]).map(x=>x[1]);
+const meaning = (lg,p) => lg==="ja" ? p.en : p.ja;       // 日本語は英語から、他は日本語から
+const reading = (lg,p) => lg==="zh" ? p.py : (lg==="ja" ? (p.jr||"") : "");
 
 /* ---------- 音声 ---------- */
 let voices = [];
-function loadVoices(){ voices = (window.speechSynthesis && speechSynthesis.getVoices()) || []; renderTabs(); voiceNote(); }
+function loadVoices(){ voices = (window.speechSynthesis && speechSynthesis.getVoices()) || []; if(view==="home") show("home"); else renderTabs(); voiceNote(); }
 function voiceFor(lg){
   const pre = L[lg].code.slice(0,2);
   return voices.find(v=>v.lang.replace("_","-")===L[lg].code) || voices.find(v=>v.lang.toLowerCase().startsWith(pre)) || null;
@@ -180,7 +210,7 @@ function voiceNote(){
   const n = document.getElementById("voiceNote");
   const missing = Object.keys(L).filter(lg=>!canSpeak(lg)).map(lg=>L[lg].name);
   n.hidden = !missing.length || !voices.length;
-  n.textContent = missing.length ? `この端末には ${missing.join("・")} の読み上げ音声がない。その言語は「読んで選ぶ」問題だけになる。` : "";
+  n.textContent = missing.length ? `この端末には ${missing.join("・")} の読み上げ音声がない。その言語は音なしで練習する。` : "";
 }
 
 /* ---------- 効果音（その場で合成） ---------- */
@@ -199,46 +229,62 @@ function tone(freqs, dur=0.18, type="sine", gain=0.16){
   }catch(e){}
 }
 const SCALE = [523.25,587.33,659.25,783.99,880,1046.5,1174.66,1318.51,1567.98,1760];
-const chime = combo => { const f = SCALE[Math.min(combo-1, SCALE.length-1)]; tone([f, f*1.5], 0.22); };
+const chime = n => { const f = SCALE[Math.min(Math.max(n,1)-1, SCALE.length-1)]; tone([f, f*1.5], 0.22); };
 const thud  = () => tone([196, 147], 0.2, "triangle", 0.2);
 
 /* ---------- 画面 ---------- */
 const $ = id => document.getElementById(id);
 const esc = s => String(s).replace(/[&<>"]/g, c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
-let view = "home", R = null;
+let view = "home", R = null, T = null;
 
 function renderTabs(){
   const t = $("tabs"); t.innerHTML = "";
   Object.keys(L).forEach(lg=>{
-    const m = mastered(lg);
+    const k = known(lg), d = dueList(lg).length + newLeft(lg);
     const b = document.createElement("button");
     b.className = "tab"; b.style.setProperty("--c", L[lg].c);
     b.setAttribute("aria-pressed", String(S.lang===lg));
-    b.innerHTML = `<span class="nm">${L[lg].name}</span><span class="meter"><i style="width:${m/P.length*100}%"></i></span><span class="cnt">${m} / ${P.length}</span>`;
-    b.onclick = ()=>{ if(view==="quiz") return; S.lang = lg; save(); show("home"); };
+    b.innerHTML = `<span class="nm">${L[lg].name}</span><span class="meter"><i style="width:${k/P.length*100}%"></i></span><span class="cnt">${k} / ${P.length}</span><span class="cnt">${d?`今日 ${d}`:"　"}</span>`;
+    b.onclick = ()=>{ if(view==="session"||view==="quiz") return; S.lang = lg; save(); show("home"); };
     t.appendChild(b);
   });
-  const all = Object.keys(L).reduce((a,lg)=>a+mastered(lg),0);
+  const all = Object.keys(L).reduce((a,lg)=>a+known(lg),0);
   $("total").textContent = `覚えた ${all} / ${P.length*4}`;
   document.documentElement.style.setProperty("--c", L[S.lang].c);
 }
+function show(v){ view = v; renderTabs(); ({home, session, done, quiz, result, list})[v](); }
 
-function show(v){ view = v; renderTabs(); ({home:home, quiz:quiz, result:result, list:list})[v](); }
+function nextDue(lg){
+  const ds = Object.values(S.card[lg]).map(c=>c.due).filter(d=>d>today()).sort();
+  if(!ds.length) return "";
+  const days = Math.round((new Date(ds[0]) - new Date(today()))/86400000);
+  return `次の復習は ${days===1?"明日":days+"日後"}（${ds.filter(d=>d===ds[0]).length}文）`;
+}
 
 function home(){
-  const lg = S.lang, m = mastered(lg);
-  const seen = P.filter(p=>S.box[lg][p.id]!==undefined).length;
+  const lg = S.lang, due = dueList(lg).length, nw = newLeft(lg), left = unseen(lg).length;
+  const todo = due + nw;
   $("view").innerHTML = `<div class="panel home">
     <h2>${L[lg].name}</h2>
-    <p class="sub">${m===0 && seen===0 ? `日常の${P.length}文。1回10問、1分ほど。` : `覚えた ${m}文 ・ 出会った ${seen}文 ・ まだ ${P.length-seen}文`}</p>
-    <p>${canSpeak(lg) ? "聞いて意味を選ぶ問題と、日本語を見て正しい文を選ぶ問題が交互に出る。" : "この端末では読み上げが使えないので、読んで選ぶ問題だけになる。"}正解が続くと音が高くなっていく。</p>
-    <div class="row"><button class="primary" id="go">10問はじめる</button></div>
+    <div class="today">
+      <div class="box"><b>${due}</b><span>今日の復習</span></div>
+      <div class="box"><b>${nw}</b><span>新しい文</span></div>
+      <div class="box"><b>${known(lg)}</b><span>覚えた</span></div>
+    </div>
+    ${todo ? `<div class="row"><button class="primary" id="go">今日の分をはじめる（${todo}文）</button></div>`
+           : `<p>今日の分は終わり。${esc(nextDue(lg))}</p>${left?`<div class="row"><button class="ghost" id="more">新しい文をあと${Math.min(5,left)}つ足す</button></div>`:""}`}
     <div class="row" style="justify-content:space-between;align-items:center">
-      <button class="ghost" id="toList">四つの言葉で一覧</button>
+      <span class="row"><button class="ghost" id="toQuiz">4択で腕試し</button><button class="ghost" id="toList">一覧</button></span>
       <span class="speed">速さ <button data-r="0.75">ゆっくり</button><button data-r="1">ふつう</button></span>
     </div>
+    <details><summary>この練習のやり方について</summary>
+      <p>答えを見る前に、自分で思い出す。思い出せた文は、1日後・3日後・7日後…と間を空けてもう一度出る。3回、別の日に思い出せたら「覚えた」に数える。</p>
+      <p>10種類の勉強法を比べた総説（Dunlosky ほか 2013）で評価が高かったのは「思い出す練習」と「間を空ける練習」の2つ。組み合わせた実験（Rawson ほか 2013）では、3日に分けて1回ずつ思い出した人は1週間後に68%、1日で3回思い出した人は26%覚えていた。</p>
+    </details>
   </div>`;
-  $("go").onclick = start;
+  if($("go")) $("go").onclick = ()=>startSession(false);
+  if($("more")) $("more").onclick = ()=>startSession(true);
+  $("toQuiz").onclick = startQuiz;
   $("toList").onclick = ()=>show("list");
   document.querySelectorAll(".speed button").forEach(b=>{
     b.setAttribute("aria-pressed", String(+b.dataset.r===S.rate));
@@ -246,44 +292,117 @@ function home(){
   });
 }
 
-/* 出題: 覚えていない文ほど出やすい */
-function pick(lg){
-  const pool = P.map(p=>({p, w:[5,3,2,1][Math.min(box(lg,p.id),3)] * (S.box[lg][p.id]===undefined ? 1.2 : 1)}));
-  const out = [];
-  while(out.length < ROUND && pool.length){
-    const sum = pool.reduce((a,x)=>a+x.w,0); let r = Math.random()*sum, i = 0;
-    while(r > pool[i].w){ r -= pool[i].w; i++; }
-    out.push(pool.splice(i,1)[0].p);
-  }
-  return out;
+/* ---------- 今日の分：思い出す → 答え合わせ → 日を空けてもう一度 ---------- */
+function startSession(extra){
+  tone([0],0.01);
+  const lg = S.lang;
+  const news = unseen(lg).slice(0, extra ? 5 : newLeft(lg));
+  const due = shuffle(dueList(lg));
+  const Q = [];
+  news.forEach(p=>Q.push({p, type:"study"}));
+  due.forEach(p=>Q.push({p, type:"recall", fails:0, isNew:false}));
+  T = { lg, Q, total: news.length + due.length, finished:0, first:0, retried:0, streak:0 };
+  if(!Q.length) return show("home");
+  show("session");
 }
+function session(){
+  const lg = T.lg, it = T.Q[0], p = it.p;
+  const head = `<div class="qhead"><span>${T.finished} / ${T.total}</span><span class="combo">${T.streak>=2?T.streak+"連続":""}</span></div><div class="bar2"><i style="width:${T.finished/T.total*100}%"></i></div>`;
+  if(it.type==="study"){
+    $("view").innerHTML = `<div class="panel">${head}
+      <span class="newtag">新しい文</span>
+      <div class="target" lang="${L[lg].code}">${esc(p[lg])}</div>
+      ${reading(lg,p)?`<div class="sub">${esc(reading(lg,p))}</div>`:""}
+      <div>${esc(meaning(lg,p))}</div>
+      <div class="row">${canSpeak(lg)?'<button class="ghost" id="hear">▶ 聞く</button>':""}<button class="primary" id="ok">声に出してみた。次へ</button></div>
+      <p class="note">このあと、少し間を置いて「思い出す」問題として出る。</p></div>`;
+    if(canSpeak(lg)){ $("hear").onclick = ()=>speak(lg,p[lg]); setTimeout(()=>speak(lg,p[lg]),200); }
+    $("ok").onclick = ()=>{
+      T.Q.shift(); T.Q.push({p, type:"recall", fails:0, isNew:true});
+      if(S.newDay.date!==today()) S.newDay = {date:today(), n:{}};
+      S.newDay.n[lg] = (S.newDay.n[lg]||0) + 1; save();
+      session();
+    };
+    return;
+  }
+  const c = S.card[lg][p.id];
+  const listen = canSpeak(lg) && !it.isNew && c && c.s%2===1;       // 復習は「言う」と「聞く」を交互に
+  $("view").innerHTML = `<div class="panel">${head}
+    <div class="kind">${listen ? "聞いて、意味を思い出す" : `${L[lg].name}で言ってみる`}</div>
+    <div class="prompt">${listen ? `<button class="play" id="play" aria-label="もう一度聞く">▶</button><span class="sub">意味を頭の中で言ってから、答えを見る</span>` : `<span${lg==="ja"?' lang="en"':""}>${esc(meaning(lg,p))}</span>`}</div>
+    <div class="row" id="revealRow"><button class="primary" id="reveal">答えを見る</button></div>
+    <div class="answer" id="answer" hidden></div>
+    <div class="grade" id="grade" hidden>
+      <button class="no" id="no">${listen?"分からなかった":"言えなかった"}</button>
+      <button class="yes" id="yes">${listen?"分かった":"言えた"}</button>
+    </div></div>`;
+  if(listen){ $("play").onclick = ()=>speak(lg,p[lg]); setTimeout(()=>speak(lg,p[lg]),200); }
+  $("reveal").onclick = ()=>{
+    $("revealRow").hidden = true;
+    const a = $("answer"); a.hidden = false;
+    a.innerHTML = `<div class="t"><span lang="${L[lg].code}">${esc(p[lg])}</span>${canSpeak(lg)?'<button class="mini" id="again">▶ 聞く</button>':""}</div>
+      ${reading(lg,p)?`<div class="r">${esc(reading(lg,p))}</div>`:""}<div class="r">${esc(meaning(lg,p))}</div>`;
+    if(canSpeak(lg)){ $("again").onclick = ()=>speak(lg,p[lg]); if(!listen) setTimeout(()=>speak(lg,p[lg]),150); }
+    $("grade").hidden = false;
+    $("yes").onclick = ()=>grade(true); $("no").onclick = ()=>grade(false);
+  };
+}
+function grade(ok){
+  const lg = T.lg, it = T.Q.shift(), p = it.p;
+  if(window.speechSynthesis) speechSynthesis.cancel();
+  if(!ok){
+    it.fails++; T.streak = 0; thud();
+    T.Q.splice(Math.min(3, T.Q.length), 0, it);            // 少し後でもう一度。思い出せるまで終わらない
+    return session();
+  }
+  const c = S.card[lg][p.id] || {s:-1};
+  const s = it.isNew ? 0 : (it.fails===0 ? Math.min(c.s+1, STEPS.length-1) : Math.max(0, c.s-1));
+  S.card[lg][p.id] = { s, due: addDays(STEPS[s]) }; save();
+  T.finished++; T.streak++; if(it.fails===0) T.first++; else T.retried++;
+  chime(T.streak);
+  if(T.Q.length) session(); else show("done");
+}
+function done(){
+  const lg = T.lg, cnt = {};
+  Object.values(S.card[lg]).forEach(c=>{ cnt[c.due] = (cnt[c.due]||0)+1; });
+  const rows = Object.keys(cnt).sort().slice(0,5).map(d=>{
+    const days = Math.round((new Date(d) - new Date(today()))/86400000);
+    return `<li><span>${days<=0?"今日":days===1?"明日":days+"日後"}</span><span>${cnt[d]}文</span></li>`;
+  }).join("");
+  $("view").innerHTML = `<div class="panel result">
+    <div class="row" style="align-items:flex-end;justify-content:space-between">
+      <div><div class="big">${T.total}<span style="font-size:22px">文</span></div><div class="sub">今日の分は終わり</div></div>
+      <div class="sub" style="text-align:right">一度で思い出せた ${T.first}<br>やり直して思い出せた ${T.retried}</div>
+    </div>
+    <div class="kind">次に出る日</div><ul class="sched">${rows}</ul>
+    <div class="row"><button class="primary" id="home">戻る</button></div></div>`;
+  tone([783.99,987.77,1174.66,1567.98],0.3);
+  $("home").onclick = ()=>show("home");
+}
+
+/* ---------- 4択で腕試し（進み具合には数えない） ---------- */
 function distract(p, n){
   const same = P.filter(x=>x.id!==p.id && x.scene===p.scene), other = P.filter(x=>x.id!==p.id && x.scene!==p.scene);
-  const sh = a => a.map(x=>[Math.random(),x]).sort((a,b)=>a[0]-b[0]).map(x=>x[1]);
-  return sh([...sh(same).slice(0,2), ...sh(other)]).slice(0,n);
+  return shuffle([...shuffle(same).slice(0,2), ...shuffle(other)]).slice(0,n);
 }
 function makeQ(lg, p, i){
   const listen = canSpeak(lg) && i%2===0;
-  const opts = [p, ...distract(p,3)].map(x=>[Math.random(),x]).sort((a,b)=>a[0]-b[0]).map(x=>x[1]);
-  if(listen) return {p, kind:"listen", label:"聞いて、意味を選ぶ", show: lg==="ja" ? "fill" : "ja", opts};
-  // 読んで選ぶ: 日本語は英語から、他は日本語から
+  const opts = shuffle([p, ...distract(p,3)]);
+  if(listen) return {p, kind:"listen", label:"聞いて、意味を選ぶ", show:"ja", opts};
   return {p, kind:"read", label: lg==="ja" ? "英語に合う日本語を選ぶ" : `日本語に合う${L[lg].name}を選ぶ`, show: lg, opts};
 }
-
-function start(){
-  tone([0],0.01);                                   // 音を使えるようにする（最初の操作の中で）
+function startQuiz(){
+  tone([0],0.01);
   const lg = S.lang;
-  R = { lg, qs: pick(lg).map((p,i)=>makeQ(lg,p,i)), i:0, ok:0, combo:0, best:0, marks:[], miss:[], done:false };
-  S.plays++; save();
+  R = { lg, qs: shuffle(P).slice(0,ROUND).map((p,i)=>makeQ(lg,p,i)), i:0, ok:0, combo:0, best:0, marks:[], miss:[] };
   show("quiz");
 }
-
 function quiz(){
   const q = R.qs[R.i], lg = R.lg, p = q.p;
   const promptHTML = q.kind==="listen"
     ? `<button class="play" id="play" aria-label="もう一度聞く">▶</button><span class="sub">音を聞いて選ぶ</span>`
     : (lg==="ja" ? `<span lang="en">${esc(p.en)}</span>` : `<span>${esc(p.ja)}</span>`);
-  const optText = x => q.show==="ja" ? esc(x.ja) : (q.show==="fill" ? esc(x.ja) : `<span lang="${L[lg].code}">${esc(x[lg])}</span>`);
+  const optText = x => q.show==="ja" ? esc(x.ja) : `<span lang="${L[lg].code}">${esc(x[lg])}</span>`;
   $("view").innerHTML = `<div class="panel">
     <div class="qhead"><span class="dots">${R.qs.map((_,k)=>`<i class="${R.marks[k]||(k===R.i?'now':'')}"></i>`).join("")}</span><span class="combo" id="combo">${R.combo>=2?R.combo+"連続":""}</span></div>
     <div class="kind">${q.label}</div>
@@ -295,50 +414,33 @@ function quiz(){
   if(q.kind==="listen"){ $("play").onclick = ()=>speak(lg, p[lg]); setTimeout(()=>speak(lg, p[lg]), 150); }
   document.querySelectorAll(".opt").forEach(b=>b.onclick=()=>answer(+b.dataset.k));
 }
-
 function answer(k){
-  const q = R.qs[R.i], lg = R.lg, p = q.p, chosen = q.opts[k], right = chosen.id===p.id;
+  const q = R.qs[R.i], lg = R.lg, p = q.p, right = q.opts[k].id===p.id;
   document.querySelectorAll(".opt").forEach((b,j)=>{
     b.disabled = true;
     if(q.opts[j].id===p.id) b.classList.add("ok"); else if(j===k) b.classList.add("ng");
   });
   if(right){
-    R.ok++; R.combo++; R.best = Math.max(R.best, R.combo); R.marks[R.i] = "ok";
-    S.box[lg][p.id] = Math.min(MASTER, box(lg,p.id)+1);
-    chime(R.combo);
+    R.ok++; R.combo++; R.best = Math.max(R.best, R.combo); R.marks[R.i] = "ok"; chime(R.combo);
     const c = $("combo"); c.textContent = R.combo>=2 ? R.combo+"連続" : ""; c.classList.remove("bump"); void c.offsetWidth; c.classList.add("bump");
-  } else {
-    R.combo = 0; R.marks[R.i] = "ng"; R.miss.push(p);
-    S.box[lg][p.id] = 0;
-    thud(); $("combo").textContent = "";
-  }
-  save();
-  const reading = lg==="zh" ? p.py : (lg==="ja" ? (p.jr || "") : "");
+  } else { R.combo = 0; R.marks[R.i] = "ng"; R.miss.push(p); thud(); $("combo").textContent = ""; }
   const a = $("answer"); a.hidden = false;
   a.innerHTML = `<div class="t"><span lang="${L[lg].code}">${esc(p[lg])}</span>${canSpeak(lg)?'<button class="mini" id="again">▶ 聞く</button>':""}</div>
-    ${reading?`<div class="r">${esc(reading)}</div>`:""}<div class="r">${lg==="ja" ? esc(p.en) : esc(p.ja)}</div>`;
+    ${reading(lg,p)?`<div class="r">${esc(reading(lg,p))}</div>`:""}<div class="r">${esc(meaning(lg,p))}</div>`;
   if(canSpeak(lg)){ $("again").onclick = ()=>speak(lg, p[lg]); setTimeout(()=>speak(lg, p[lg]), right ? 350 : 500); }
   $("nextRow").hidden = false;
-  $("next").onclick = next;
-  $("next").focus({preventScroll:true});
+  $("next").onclick = ()=>{ if(window.speechSynthesis) speechSynthesis.cancel(); R.i++; if(R.i>=ROUND) show("result"); else quiz(); };
 }
-function next(){ if(window.speechSynthesis) speechSynthesis.cancel(); R.i++; if(R.i>=ROUND) show("result"); else quiz(); }
-
 function result(){
   const lg = R.lg;
-  const word = R.ok===10 ? "全問正解" : R.ok>=8 ? "ほぼ完璧" : R.ok>=5 ? "半分以上" : "ここから";
   $("view").innerHTML = `<div class="panel result">
-    <div class="row" style="align-items:flex-end;justify-content:space-between">
-      <div><div class="big">${R.ok}<span style="font-size:22px">/10</span></div><div class="sub">${word} ・ 最高 ${R.best}連続</div></div>
-      <div class="sub" style="text-align:right">${L[lg].name}で覚えた文<br><b style="font-size:20px;color:var(--ink)">${mastered(lg)} / ${P.length}</b></div>
-    </div>
-    ${R.miss.length ? `<div class="kind">間違えた文（次の回に多めに出る）</div><ul>${R.miss.map(p=>`<li><div><span lang="${L[lg].code}">${esc(p[lg])}</span><small>${lg==="ja"?esc(p.en):esc(p.ja)}</small></div>${canSpeak(lg)?`<button class="mini" data-id="${p.id}">▶</button>`:""}</li>`).join("")}</ul>` : `<p>間違えた文はなし。</p>`}
+    <div><div class="big">${R.ok}<span style="font-size:22px">/10</span></div><div class="sub">最高 ${R.best}連続 ・ 腕試しは進み具合には数えない</div></div>
+    ${R.miss.length ? `<div class="kind">間違えた文</div><ul>${R.miss.map(p=>`<li><div><span lang="${L[lg].code}">${esc(p[lg])}</span><small>${esc(meaning(lg,p))}</small></div>${canSpeak(lg)?`<button class="mini" data-id="${p.id}">▶</button>`:""}</li>`).join("")}</ul>` : `<p>間違えた文はなし。</p>`}
     <div class="row"><button class="primary" id="again2">もう10問</button><button class="ghost" id="home">戻る</button></div>
   </div>`;
-  R.miss.length && tone([659.25,783.99,1046.5],0.25);
   if(R.ok===10) tone([783.99,987.77,1174.66,1567.98],0.3);
   document.querySelectorAll(".result .mini").forEach(b=>b.onclick=()=>speak(lg, P[+b.dataset.id][lg]));
-  $("again2").onclick = start; $("home").onclick = ()=>show("home");
+  $("again2").onclick = startQuiz; $("home").onclick = ()=>show("home");
 }
 
 function list(){
@@ -346,8 +448,8 @@ function list(){
   let scene = "";
   P.forEach(p=>{
     if(p.scene!==scene){ scene = p.scene; html += `<div class="scene">${esc(scene)}</div>`; }
-    html += `<div class="card">` + ["ja","en","de","zh"].map(lg=>{
-      const sub = lg==="zh" ? p.py : (lg==="ja" ? p.jr : "");
+    html += `<div class="card">` + Object.keys(L).map(lg=>{
+      const sub = reading(lg,p);
       return `<div class="line" style="--lc:${L[lg].c}"><span class="lg">${L[lg].tag}</span><span class="tx" lang="${L[lg].code}">${esc(p[lg])}${sub?`<small>${esc(sub)}</small>`:""}</span>${canSpeak(lg)?`<button data-lg="${lg}" data-id="${p.id}">▶</button>`:""}</div>`;
     }).join("") + `</div>`;
   });
