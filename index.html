@@ -163,7 +163,6 @@ const mastered = lg => P.filter(p=>box(lg,p.id)>=MASTER).length;
 /* ---------- 音声 ---------- */
 let voices = [];
 function loadVoices(){ voices = (window.speechSynthesis && speechSynthesis.getVoices()) || []; renderTabs(); voiceNote(); }
-if(window.speechSynthesis){ loadVoices(); speechSynthesis.onvoiceschanged = loadVoices; }
 function voiceFor(lg){
   const pre = L[lg].code.slice(0,2);
   return voices.find(v=>v.lang.replace("_","-")===L[lg].code) || voices.find(v=>v.lang.toLowerCase().startsWith(pre)) || null;
@@ -357,7 +356,9 @@ function list(){
   document.querySelectorAll(".card button").forEach(b=>b.onclick=()=>speak(b.dataset.lg, P[+b.dataset.id][b.dataset.lg]));
 }
 
-show("home"); voiceNote();
+show("home");
+if(window.speechSynthesis){ loadVoices(); speechSynthesis.onvoiceschanged = loadVoices; }
+voiceNote();
 </script>
 </body>
 </html>
